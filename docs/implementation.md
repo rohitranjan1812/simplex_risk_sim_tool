@@ -10,8 +10,14 @@
 ### 2.1 Schemas (`app/schemas.py`)
 - Enumerated `LossDistribution` (normal, lognormal, pareto).
 - `RiskFactor` enforces positive frequency/severity inputs plus optional correlation knob (future use for covariance modeling).
+  - **New:** `is_cat_event` flag to identify catastrophic events for specialized metrics.
+  - **New:** `geographic_zone` attribute for spatial exposure tracking.
+- `ActuarialLayer` models insurance coverage with deductibles, limits, participation rates, and premium rates.
 - `SimulationRequest` includes metadata + RNG seed, validated bounds (100–500k trials) to protect compute budgets.
+  - **New:** `layers` field for actuarial layer definitions.
 - Response objects capture histogram buckets, percentile stats, and scenario metadata enabling idempotent UI refresh with minimal recomputation.
+  - **New:** Actuarial metrics (burning_cost, loss_ratio, layer_losses, net_retained_loss).
+  - **New:** CAT metrics (oep_curve, aep_curve, pml_values, cat_event_count, geographic_exposure).
 
 ### 2.2 Engine (`app/simulation.py`)
 1. **Distribution Sampling** – Severity draws per factor using NumPy RNG.
@@ -22,6 +28,16 @@
 3. **Aggregation** – After iterating factors, compute summary stats, histogram (density converted to bucket probabilities), and percentile metrics (`np.quantile`).
 4. **Tail Metrics** – `worst_trials` sorts and surfaces top 10 losses; `expected_shortfall` averages losses above mean; `probability_of_loss` derived from positive-tail ratio.
 5. **Determinism** – All runs rely on `np.random.default_rng(seed)` ensuring reproducibility when user provides a seed. Trials automatically capped by `Settings.max_trials`.
+6. **Actuarial Layer Application** – Applies deductibles, limits, and participation rates to gross losses:
+   - Excess = max(Loss - Deductible, 0)
+   - Capped = min(Excess, Limit)
+   - Layer Loss = Capped × Participation Rate
+   - Net Retained = Gross Loss - Layer Loss
+7. **CAT Metrics Calculation**:
+   - **OEP/AEP Curves** – Exceedance probability curves at standard return periods (10, 25, 50, 100, 250, 500 years).
+   - **PML** – Probable Maximum Loss at 100, 250, and 500-year return periods.
+   - **Geographic Exposure** – Tracks losses by geographic zone for concentration risk analysis.
+   - **Event Counting** – Counts catastrophic events across all trials.
 
 ### 2.3 API Layer (`app/main.py`)
 - FastAPI routers annotate responses for auto-generated OpenAPI docs.
@@ -31,7 +47,10 @@
 ### 2.4 Testing (`tests/*.py`)
 - `test_simulation.py` ensures positive losses, histogram creation, deterministic outputs given identical seeds.
 - `test_api.py` uses FastAPI `TestClient` to validate endpoint contracts and sample scenario semantics.
+- `test_actuarial.py` validates burning cost calculations, layer applications, coinsurance, and loss ratios.
+- `test_cat.py` tests CAT event identification, OEP/AEP curves, PML calculations, and geographic exposure tracking.
 - Pytest config sets `asyncio_mode=auto` and adds `app` to `PYTHONPATH` for direct imports.
+- **Test Coverage**: 16 tests covering core simulation, API contracts, actuarial features, and CAT modeling.
 
 ## 3. Frontend Deep Dive
 ### 3.1 State + Hooks (`src/useSimulation.ts`)
@@ -66,11 +85,36 @@
 - **Extensibility** – Replace Poisson arrival with user-selected distributions, plug covariance matrices for correlated factors, or connect persistence (Postgres) for scenario history.
 
 ## 6. Testing Evidence
-- `pytest` run (5 tests) – PASS in ~2s on Python 3.12.6 (see console log in execution notes).
+- `pytest` run (16 tests) – PASS covering core simulation, API contracts, actuarial features, and CAT modeling.
 - `vitest run` – PASS (1 component test) after installing jsdom, as recorded in terminal output.
+- **Test Categories:**
+  - Core simulation: 2 tests (determinism, positive losses)
+  - API contracts: 3 tests (health, simulate, sample scenario)
+  - Actuarial features: 5 tests (burning cost, layers, coinsurance, loss ratios)
+  - CAT/accumulation: 6 tests (event identification, OEP/AEP, PML, geographic tracking)
 
-## 7. Future Enhancements
+## 7. Advanced Features
+### 7.1 Actuarial Modeling
+- **Insurance Layers** – Model deductibles, limits, and coinsurance with `ActuarialLayer` schema.
+- **Burning Cost** – Automatic calculation of average annual loss rate as percentage of portfolio value.
+- **Loss Ratios** – Compare actual losses to premiums for profitability analysis.
+- **Net Retained Loss** – Track losses after applying insurance layers.
+- See `docs/actuarial_cat_features.md` for detailed guide and examples.
+
+### 7.2 CAT/Accumulation Analysis
+- **Catastrophic Events** – Flag risk factors as CAT events with `is_cat_event` for specialized analysis.
+- **Geographic Exposure** – Track losses by zone using `geographic_zone` attribute.
+- **OEP/AEP Curves** – Occurrence and Aggregate Exceedance Probability at standard return periods.
+- **PML Calculations** – Probable Maximum Loss at 100, 250, and 500-year return periods.
+- **Event Counting** – Track frequency of catastrophic events across simulations.
+- See `docs/actuarial_cat_features.md` for mathematical formulations and use cases.
+
+## 8. Future Enhancements
 1. **Batch simulations** – queue multiple scenarios and stream incremental percentiles via WebSockets.
 2. **Report exports** – PDF/CSV summarizing VaR ladder + scenario metadata for risk committees.
 3. **User management** – Role-based permissions with audit log of scenario changes.
 4. **Scenario versioning** – Persist payloads + results for time-series analysis.
+5. **Spatial Correlation** – Implement correlation matrices for geographic zones.
+6. **Advanced Reinsurance** – Model quota share, surplus share, and stop-loss treaties.
+7. **Parameter Uncertainty** – Add secondary uncertainty to distributions for robust risk estimates.
+8. **Climate Trends** – Adjust CAT event frequencies and severities based on climate projections.

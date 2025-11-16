@@ -24,6 +24,21 @@ class RiskFactor(BaseModel):
     severity_std: PositiveFloat = Field(..., description="Std deviation of loss severity per event.")
     distribution: LossDistribution = LossDistribution.LOGNORMAL
     correlation: Annotated[float, confloat(ge=-0.95, le=0.95)] = 0.0
+    is_cat_event: bool = Field(False, description="Whether this is a catastrophic event (rare, high severity).")
+    geographic_zone: str | None = Field(None, max_length=50, description="Geographic zone for spatial correlation.")
+
+
+class ActuarialLayer(BaseModel):
+    """Represents an insurance layer with deductible and limit."""
+
+    deductible: float = Field(0.0, ge=0.0, description="Attachment point (deductible) for this layer.")
+    limit: float | None = Field(None, gt=0.0, description="Maximum coverage limit for this layer.")
+    participation: Annotated[float, confloat(gt=0.0, le=1.0)] = Field(
+        1.0, description="Coinsurance/participation rate (0-1)."
+    )
+    premium_rate: Annotated[float, confloat(ge=0.0, le=1.0)] | None = Field(
+        None, description="Premium rate as fraction of expected losses."
+    )
 
 
 class ScenarioMeta(BaseModel):
@@ -41,6 +56,9 @@ class SimulationRequest(BaseModel):
     seed: int | None = Field(None, description="Optional RNG seed for reproducibility.")
     meta: ScenarioMeta
     factors: list[RiskFactor]
+    layers: list[ActuarialLayer] = Field(
+        default_factory=list, description="Insurance layers for actuarial analysis."
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -102,6 +120,19 @@ class SimulationResult(BaseModel):
     expected_shortfall: float
     probability_of_loss: float
     metadata: ScenarioMeta
+    # Actuarial metrics
+    burning_cost: float | None = Field(None, description="Average annual loss rate.")
+    loss_ratio: float | None = Field(None, description="Loss ratio for actuarial pricing.")
+    layer_losses: dict[str, float] | None = Field(None, description="Losses by layer after deductibles/limits.")
+    net_retained_loss: float | None = Field(None, description="Net loss after applying layers.")
+    # CAT metrics
+    oep_curve: list[PercentilePoint] | None = Field(None, description="Occurrence Exceedance Probability curve.")
+    aep_curve: list[PercentilePoint] | None = Field(None, description="Aggregate Exceedance Probability curve.")
+    pml_values: dict[str, float] | None = Field(None, description="Probable Maximum Loss at various return periods.")
+    cat_event_count: int | None = Field(None, description="Number of catastrophic events in simulation.")
+    geographic_exposure: dict[str, float] | None = Field(
+        None, description="Exposure breakdown by geographic zone."
+    )
 
 
 class HealthResponse(BaseModel):
